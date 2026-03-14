@@ -9,7 +9,6 @@ import TrashManager from './components/TrashManager';
 import ActiveJobCard from './components/ActiveJobCard';
 import { LayoutDashboard, Trash2 } from 'lucide-react';
 
-// ✨ 优化：动态读取环境变量，若未配置则优雅降级为当前域名
 const API_BASE = import.meta.env.VITE_API_BASE || `http://${window.location.hostname}:8001`;
 
 export const formatShortDate = (dateStr?: string) => {
@@ -20,7 +19,7 @@ export const formatShortDate = (dateStr?: string) => {
 };
 
 const App: React.FC = () => {
-  const navigate = useNavigate(); // ✨ 优化：引入路由导航钩子
+  const navigate = useNavigate(); 
 
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
   const [isLoggedInAsAdmin, setIsLoggedInAsAdmin] = useState(false);
@@ -30,10 +29,6 @@ const App: React.FC = () => {
   const [jobs, setJobs] = useState<any[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const pollIntervalRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/users`).then(res => res.json()).then(data => setAllowedUsers(data.users || []));
-  }, []);
 
   const handleUpdateAllowedUsers = async (users: AllowedUser[]) => {
     setAllowedUsers(users);
@@ -72,7 +67,7 @@ const App: React.FC = () => {
     setIconClicks(prev => { 
       const next = prev + 1; 
       if (next >= 7) { 
-        navigate('/admin-login'); // ✨ 优化：触发彩蛋后跳转到管理员登录路由
+        navigate('/admin-login'); 
         return 0; 
       } 
       return next; 
@@ -85,21 +80,34 @@ const App: React.FC = () => {
     setCurrentUser(null); 
     setIsLoggedInAsAdmin(false); 
     setJobs([]); 
-    navigate('/login'); // ✨ 优化：登出后跳转至登录页
+    navigate('/login'); 
   };
 
-  const handleLogin = async (user: UserData, mode: 'employee' | 'admin') => {
+  const handleLogin = async (username: string, password?: string, mode: 'employee' | 'admin' = 'employee') => {
     try {
-      const res = await fetch(`${API_BASE}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user.username, mode }) });
+      const res = await fetch(`${API_BASE}/api/login`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ username, password, mode }) 
+      });
       const data = await res.json();
       if (data.status !== 'success') { alert(data.message); return; }
       
       if (mode === 'admin') {
         setIsLoggedInAsAdmin(true);
-        navigate('/admin'); // ✨ 优化：管理员登录成功进入控制台路由
+        const adminRes = await fetch(`${API_BASE}/api/admin/users`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ username, password, mode })
+        });
+        if(adminRes.ok) {
+           const adminData = await adminRes.json();
+           setAllowedUsers(adminData.users || []);
+        }
+        navigate('/admin'); 
       } else {
-        setCurrentUser(user);
-        navigate('/dashboard'); // ✨ 优化：员工登录成功进入工作台路由
+        setCurrentUser({ username, apiKey: data.api_key });
+        navigate('/dashboard'); 
       }
     } catch { alert("服务器连接失败！请确认后端系统已启动。"); }
   };
@@ -109,7 +117,7 @@ const App: React.FC = () => {
     setIsProcessing(true);
     try {
       await fetch(`${API_BASE}/api/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: inputs.urls, model: inputs.model, username: currentUser.username }) });
-      navigate('/dashboard'); // ✨ 优化：开始任务后自动切换到工作台面板
+      navigate('/dashboard'); 
       fetchJobs();
     } catch {} finally { setIsProcessing(false); }
   };
@@ -127,7 +135,6 @@ const App: React.FC = () => {
     } catch { alert("发送失败，请检查网络！"); }
   };
 
-  // 新增：触发无损更新数据与AI分析的函数
   const updateJobData = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!currentUser) return;
@@ -152,7 +159,6 @@ const App: React.FC = () => {
   const permanentDelete = async (id: string) => { if (confirm('确认物理粉碎？')) { await fetch(`${API_BASE}/api/jobs/${id}?username=${encodeURIComponent(currentUser!.username)}`, { method: 'DELETE' }); fetchJobs(); } };
   const clearTrash = async () => { if (confirm('清空回收站将彻底删除物理文件！')) { for (const job of trashJobs) await fetch(`${API_BASE}/api/jobs/${job.id}?username=${encodeURIComponent(currentUser!.username)}`, { method: 'DELETE' }); fetchJobs(); } };
 
-  // ✨ 优化：将原先的工作台和回收站提取为渲染函数，由路由复用
   const renderWorkbench = (viewMode: 'active' | 'trash') => (
     <main className="container mx-auto px-6 mt-12 max-w-[1400px]">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -160,7 +166,6 @@ const App: React.FC = () => {
         <div className="lg:col-span-5 space-y-8">
           <AnalysisForm onStart={startAnalysis} isProcessing={isProcessing} apiKey={currentUser?.apiKey} />
           <div className="flex gap-2 p-1.5 bg-gray-100 rounded-2xl">
-            {/* ✨ 优化：将原本的 button 替换为 react-router-dom 的 Link */}
             <Link to="/dashboard" className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-black transition-all ${viewMode === 'active' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
               <LayoutDashboard size={18} /> 工作台 ({activeJobs.length})
             </Link>
@@ -203,19 +208,18 @@ const App: React.FC = () => {
     </main>
   );
 
-  // ✨ 优化：标准化的路由架构，全面替代原先的 if-return 逻辑
   return (
     <Routes>
       <Route path="/" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
 
       <Route path="/login" element={
         currentUser ? <Navigate to="/dashboard" replace /> : 
-        <LoginForm mode="employee" allowedUsers={allowedUsers} onLogin={(user) => handleLogin(user, 'employee')} onLogoClick={handleLogoClick} />
+        <LoginForm mode="employee" onLogin={(user, pass) => handleLogin(user, pass, 'employee')} onLogoClick={handleLogoClick} />
       } />
 
       <Route path="/admin-login" element={
         isLoggedInAsAdmin ? <Navigate to="/admin" replace /> : 
-        <LoginForm mode="admin" allowedUsers={allowedUsers} onLogin={(user) => handleLogin(user, 'admin')} onCancel={() => navigate('/login')} />
+        <LoginForm mode="admin" onLogin={(user, pass) => handleLogin(user, pass, 'admin')} onCancel={() => navigate('/login')} />
       } />
 
       <Route path="/admin" element={
@@ -242,7 +246,6 @@ const App: React.FC = () => {
         ) : <Navigate to="/login" replace />
       } />
 
-      {/* 捕获所有未定义路由 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

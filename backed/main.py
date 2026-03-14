@@ -3,7 +3,7 @@ import json
 import shutil
 import subprocess
 import traceback
-import requests  # 新增：用于后端代理请求大模型
+import requests
 from datetime import datetime
 
 from fastapi import FastAPI, BackgroundTasks
@@ -260,7 +260,11 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.mount("/storage", StaticFiles(directory=USERS_DIR), name="storage")
 
-class LoginReq(BaseModel): username: str; mode: str
+class LoginReq(BaseModel): 
+    username: str
+    mode: str
+    password: str = "" 
+
 class UsersReq(BaseModel): users: list
 class AnalyzeReq(BaseModel): urls: list; model: str; username: str
 class JobReq(BaseModel): username: str
@@ -268,7 +272,15 @@ class TestAIReq(BaseModel): model: str; api_key: str
 
 @app.get("/api/users")
 def get_users():
-    return {"users": load_db().get("allowed_users", [])}
+    users = load_db().get("allowed_users", [])
+    safe_users = [{"username": u.get("username")} if isinstance(u, dict) else {"username": u} for u in users]
+    return {"users": safe_users}
+
+@app.post("/api/admin/users")
+def get_admin_users(req: LoginReq):
+    if req.mode == 'admin' and req.username == '秦涛' and req.password == 'qt20030802':
+        return {"users": load_db().get("allowed_users", [])}
+    return JSONResponse(status_code=403, content={"status": "error", "message": "非法访问，拒绝获取核心数据！"})
 
 @app.post("/api/users")
 def update_users(req: UsersReq):
@@ -277,10 +289,20 @@ def update_users(req: UsersReq):
 
 @app.post("/api/login")
 def login(req: LoginReq):
-    if req.mode == 'admin': return {"status": "success"}
-    allowed = [u.get("username") for u in load_db().get("allowed_users", []) if isinstance(u, dict)]
-    if req.username not in allowed: return JSONResponse(status_code=403, content={"status": "error", "message": "对不起，未被录入系统！"})
-    return {"status": "success"}
+    if req.mode == 'admin': 
+        if req.username == '秦涛' and req.password == 'qt20030802':
+            return {"status": "success"}
+        return JSONResponse(status_code=403, content={"status": "error", "message": "对不起，超级管理员身份或密码错误！"})
+        
+    users = load_db().get("allowed_users", [])
+    for u in users:
+        if isinstance(u, dict) and u.get("username") == req.username:
+            if u.get("password") == req.password:
+                return {"status": "success", "api_key": u.get("api_key")}
+            else:
+                return JSONResponse(status_code=403, content={"status": "error", "message": "访问密码错误，请联系管理员核对！"})
+                
+    return JSONResponse(status_code=403, content={"status": "error", "message": "对不起，未被录入系统！"})
 
 @app.post("/api/test_ai")
 def api_test_ai(req: TestAIReq):

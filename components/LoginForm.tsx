@@ -1,16 +1,13 @@
-
 import React, { useState } from 'react';
-import { UserData, AllowedUser } from '../types';
 
 interface LoginFormProps {
   mode: 'employee' | 'admin';
-  allowedUsers: AllowedUser[];
-  onLogin: (user: UserData) => void;
+  onLogin: (username: string, password?: string) => void;
   onLogoClick?: () => void;
   onCancel?: () => void;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ mode, allowedUsers, onLogin, onLogoClick, onCancel }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ mode, onLogin, onLogoClick, onCancel }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -24,27 +21,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ mode, allowedUsers, onLogin, onLo
       return;
     }
 
-    if (mode === 'admin') {
-      if (username === '秦涛' && password === 'qt20030802') {
-        onLogin({ username: '超级管理员' });
-      } else {
-        setError('管理员身份或密码错误');
-      }
-    } else {
-      // Check against allowedUsers list
-      const userMatch = allowedUsers.find(
-        u => u.username === username && u.password === password
-      );
-
-      if (userMatch) {
-        onLogin({ 
-          username: userMatch.username,
-          apiKey: userMatch.api_key 
-        });
-      } else {
-        setError('账号不存在或密码错误，请联系管理员');
-      }
-    }
+    onLogin(username, password);
   };
 
   return (
