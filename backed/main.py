@@ -439,6 +439,86 @@ def api_export(username: str, job_id: str):
     shutil.make_archive(zip_path.replace('.zip', ''), 'zip', task_dir)
     return FileResponse(zip_path, filename=f"TikTok脱机包_{job_id}.zip")
 
+# ================= 新增：管理员全局视频管控接口 =================
+@app.get("/api/admin/videos")
+def get_all_cached_videos():
+    """遍历公共 Cache 引擎池与用户池，深度聚合计算状态矩阵返回前端"""
+    videos = []
+    if os.path.exists(CACHE_DIR):
+        for video_id in os.listdir(CACHE_DIR):
+            cache_v_dir = os.path.join(CACHE_DIR, video_id)
+            if not os.path.isdir(cache_v_dir): continue
+            
+            title = "未知缓存视频"
+            meta_path = os.path.join(cache_v_dir, "meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        title = json.load(f).get("title", title)
+                except: pass
+            
+            # 使用文件夹的物理最后修改时间作为最新时间基准
+            mtime = os.path.getmtime(cache_v_dir)
+            
+            # 纵向切片遍历所有员工系统目录，计算被引用的映射关系
+            user_count = 0
+            related_users = set()
+            if os.path.exists(USERS_DIR):
+                for uname in os.listdir(USERS_DIR):
+                    user_dir = os.path.join(USERS_DIR, uname)
+                    if not os.path.isdir(user_dir): continue
+                    for job_folder in os.listdir(user_dir):
+                        job_dir = os.path.join(user_dir, job_folder)
+                        job_file = os.path.join(job_dir, "job.json")
+                        if os.path.exists(job_file):
+                            try:
+                                with open(job_file, "r", encoding="utf-8") as f:
+                                    job_data = json.load(f)
+                                # 根据硬链接的 videoId 匹配
+                                if job_data.get("videoId") == video_id:
+                                    user_count += 1
+                                    related_users.add(uname)
+                            except: pass
+            
+            videos.append({
+                "videoId": video_id,
+                "title": title,
+                "userCount": user_count,
+                "relatedUsers": list(related_users),
+                "timestamp": mtime
+            })
+            
+    # 按时间降序排列（最新存入的在最前面）
+    videos.sort(key=lambda x: x["timestamp"], reverse=True)
+    return {"videos": videos}
+
+@app.delete("/api/admin/videos/{video_id}")
+def delete_admin_video_global(video_id: str):
+    """全局级联粉碎：不仅抹除公有云 Cache 文件夹，同时物理删除所有员工账户下的相关任务记录"""
+    # 1. 物理粉碎公共区域 Cache
+    cache_v_dir = os.path.join(CACHE_DIR, video_id)
+    if os.path.exists(cache_v_dir):
+        shutil.rmtree(cache_v_dir, ignore_errors=True)
+        
+    # 2. 纵向切片，物理粉碎所有员工空间内包含该 videoId 的解析包
+    if os.path.exists(USERS_DIR):
+        for uname in os.listdir(USERS_DIR):
+            user_dir = os.path.join(USERS_DIR, uname)
+            if not os.path.isdir(user_dir): continue
+            for job_folder in os.listdir(user_dir):
+                job_dir = os.path.join(user_dir, job_folder)
+                job_file = os.path.join(job_dir, "job.json")
+                if os.path.exists(job_file):
+                    try:
+                        with open(job_file, "r", encoding="utf-8") as f:
+                            job_data = json.load(f)
+                        if job_data.get("videoId") == video_id:
+                            # 识别到匹配副本，强制抹除
+                            shutil.rmtree(job_dir, ignore_errors=True)
+                    except: pass
+                    
+    return {"status": "success"}
+
 if __name__ == "__main__":
     print(f"\n✅ 内网数据隔离引擎已启动！系统存储根目录严格锁定在：{BASE_DIR}")
     uvicorn.run(app, host="0.0.0.0", port=8001)
