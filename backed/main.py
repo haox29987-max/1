@@ -223,7 +223,12 @@ def update_existing_job_task(username: str, job_id: str):
         html_path = create_html_report(task_dir, video_data_list)
         title = analysis.get('short_summary', '分析报告')
 
-        update_job("completed", 100, "✅ 数据与AI分析已成功更新", {"title": title, "report_url": f"/storage/{username}/{job_id}/report.html"})
+        # 核心优化点：附带了最新的 `createdAt`，这样工作台面板显示的采集/更新时间也会同步刷新
+        update_job("completed", 100, "✅ 数据与AI分析已成功更新", {
+            "title": title, 
+            "report_url": f"/storage/{username}/{job_id}/report.html",
+            "createdAt": datetime.now().isoformat()
+        })
         write_log(LOG_STORAGE, "无损更新网页数据成功", html_path)
         
         # 核心：实时同步并覆盖到全局 Cache 公共文件夹

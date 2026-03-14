@@ -1,4 +1,3 @@
-
 export interface VideoMetadata {
   url: string;
   author: string;
@@ -47,6 +46,12 @@ export interface AnalysisJob {
   segments?: Segment[];
   error?: string;
   deletedAt?: number; // Timestamp when moved to trash
+  url?: string; // 补全 URL 供复制使用
+  createdAt?: string; // 更新时间与抓取时间
+  videoId?: string;
+  title?: string;
+  progressText?: string;
+  report_url?: string;
 }
 
 export interface UserData {
