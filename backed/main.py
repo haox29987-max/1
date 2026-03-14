@@ -61,7 +61,7 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
 
             update_job("completed", 100, "✅ 解析完成 (自动秒传极速复用)", {
                 "title": cached_title, 
-                "report_url": f"/storage/{username}/{job_id}/report.html",
+                "report_url": f"/storage/{username}/{job_id}/report.html?v={int(datetime.now().timestamp())}",
                 "video_rel_path": f"/storage/{username}/{job_id}/{video_file}" if video_file else ""
             })
             return 
@@ -80,7 +80,6 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
         temp_video_path = os.path.join(task_dir, f"{video_id}_temp.mp4")
         final_video_path = os.path.join(task_dir, f"{video_id}.mp4")
         
-        # ✨ 修改点 1/3：让 yt-dlp 放飞自我，拉取能拿到的最高画质，存为临时文件
         res = subprocess.run([
             "yt-dlp", 
             "-o", temp_video_path, 
@@ -96,7 +95,6 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
             
         update_job("processing", 40, "正在进行全平台兼容性转码 (强制 H.264 洗码)...")
 
-        # ✨ 修改点 2/3：使用 ffmpeg 强制转码为标准的 H.264 (libx264) 和 AAC
         ffmpeg_res = subprocess.run([
             "ffmpeg", "-y",
             "-i", temp_video_path,
@@ -112,7 +110,6 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
         if not os.path.exists(final_video_path):
             raise Exception(f"视频格式化转码失败，请检查服务器 ffmpeg 环境。\n详情: {ffmpeg_res.stderr[:200]}")
 
-        # ✨ 修改点 3/3：打扫战场，删除可能带有 H.265 编码的临时原文件，节省空间
         try:
             os.remove(temp_video_path)
         except Exception:
@@ -146,10 +143,13 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
         html_path = create_html_report(task_dir, video_data_list)
         title = analysis.get('short_summary', '分析报告')
 
-        update_job("completed", 100, "✅ 解析完成", {"title": title, "report_url": f"/storage/{username}/{job_id}/report.html"})
+        update_job("completed", 100, "✅ 解析完成", {"title": title, "report_url": f"/storage/{username}/{job_id}/report.html?v={int(datetime.now().timestamp())}"})
         write_log(LOG_STORAGE, "成功生成网页数据", html_path)
         
+        # ✨ 极致清理：在覆盖全局 Cache 前，物理粉碎旧 Cache 文件夹，确保存留的永远是纯净的最新数据
         try:
+            if os.path.exists(cached_task_dir):
+                shutil.rmtree(cached_task_dir, ignore_errors=True)
             os.makedirs(cached_task_dir, exist_ok=True)
             for item in os.listdir(task_dir):
                 if item == "job.json": continue 
@@ -201,14 +201,17 @@ def update_existing_job_task(username: str, job_id: str):
         ai_text = get_ai_analysis_with_retry(video_path, meta, model)
         if not ai_text: raise Exception("AI 未能返回有效的分析内容！")
 
-        update_job("cutting", 85, "正在组装最新报告 (沿用已有分镜画面资源)...")
         segments, analysis = parse_ai_output(ai_text)
         
-        # 核心：跳过 ffmpeg 切片分镜的过程，直接分配虚拟关联路径，防止网页破损
+        # ✨ 极致清理 1：彻底抹除当前目录下的旧 Clips 文件夹，防止残留多余的旧版本 GIF 占用空间
+        clips_dir = os.path.join(task_dir, "Clips")
+        if os.path.exists(clips_dir):
+            shutil.rmtree(clips_dir, ignore_errors=True)
+
+        update_job("cutting", 85, "正在根据最新AI脚本重新切割分镜 (清除旧数据)...")
         if segments:
-            for i, seg in enumerate(segments):
-                gif_filename = f"clip_{i+1:02d}.gif"
-                seg['gif_path'] = f"Clips/{gif_filename}"
+            # 不再跳过切片，强制重新生成最新的分镜图，确保与最新的 HTML 完全吻合
+            segments = generate_gifs_for_segments_fastapi(video_path, segments, task_dir)
 
         update_job("cutting", 95, "合成最新的本地化 HTML 网页...")
         
@@ -223,24 +226,25 @@ def update_existing_job_task(username: str, job_id: str):
         html_path = create_html_report(task_dir, video_data_list)
         title = analysis.get('short_summary', '分析报告')
 
-        # 核心优化点：附带了最新的 `createdAt`，这样工作台面板显示的采集/更新时间也会同步刷新
         update_job("completed", 100, "✅ 数据与AI分析已成功更新", {
             "title": title, 
-            "report_url": f"/storage/{username}/{job_id}/report.html",
+            "report_url": f"/storage/{username}/{job_id}/report.html?v={int(datetime.now().timestamp())}",
             "createdAt": datetime.now().isoformat()
         })
         write_log(LOG_STORAGE, "无损更新网页数据成功", html_path)
         
-        # 核心：实时同步并覆盖到全局 Cache 公共文件夹
+        # ✨ 极致清理 2：清空公共全局 Cache 文件夹里的旧数据，换上纯净的最新数据
         try:
             cached_task_dir = os.path.join(CACHE_DIR, video_id)
+            if os.path.exists(cached_task_dir):
+                shutil.rmtree(cached_task_dir, ignore_errors=True)
             os.makedirs(cached_task_dir, exist_ok=True)
             for item in os.listdir(task_dir):
                 if item == "job.json": continue 
                 s = os.path.join(task_dir, item)
                 d = os.path.join(cached_task_dir, item)
                 if os.path.isdir(s): shutil.copytree(s, d, dirs_exist_ok=True)
-                else: shutil.copy2(s, d) # 会直接覆盖同名文件（含最新的 report.html 和 meta.json）
+                else: shutil.copy2(s, d)
             with open(os.path.join(cached_task_dir, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump({"title": title}, f, ensure_ascii=False)
         except: pass
@@ -260,7 +264,7 @@ class LoginReq(BaseModel): username: str; mode: str
 class UsersReq(BaseModel): users: list
 class AnalyzeReq(BaseModel): urls: list; model: str; username: str
 class JobReq(BaseModel): username: str
-class TestAIReq(BaseModel): model: str; api_key: str  # 新增测试接口结构体
+class TestAIReq(BaseModel): model: str; api_key: str 
 
 @app.get("/api/users")
 def get_users():
@@ -278,7 +282,6 @@ def login(req: LoginReq):
     if req.username not in allowed: return JSONResponse(status_code=403, content={"status": "error", "message": "对不起，未被录入系统！"})
     return {"status": "success"}
 
-# ✨ 新增：服务端转发代理，完美绕过前端跨域限制，且隐藏了网络请求细节
 @app.post("/api/test_ai")
 def api_test_ai(req: TestAIReq):
     try:
@@ -295,8 +298,24 @@ def api_test_ai(req: TestAIReq):
 
 @app.post("/api/analyze")
 def api_analyze(req: AnalyzeReq, bg_tasks: BackgroundTasks):
-    job_id = f"Job_{datetime.now().strftime('%m%d_%H%M%S')}"
     video_id = get_tiktok_id(req.urls[0])
+    user_dir = os.path.join(USERS_DIR, req.username)
+    
+    # ✨ 极致清理 3：用户端绝对拦截！如果用户重复输入同一个视频链接，自动物理删除旧的任务，只保留最新一次的动作
+    if os.path.exists(user_dir):
+        for folder in os.listdir(user_dir):
+            old_task_dir = os.path.join(user_dir, folder)
+            old_job_file = os.path.join(old_task_dir, "job.json")
+            if os.path.exists(old_job_file):
+                try:
+                    with open(old_job_file, "r", encoding="utf-8") as f:
+                        old_job = json.load(f)
+                    if old_job.get("videoId") == video_id:
+                        shutil.rmtree(old_task_dir, ignore_errors=True) # 直接删了旧文件夹腾出空间
+                except:
+                    pass
+
+    job_id = f"Job_{datetime.now().strftime('%m%d_%H%M%S')}"
     task_dir = os.path.join(USERS_DIR, req.username, job_id)
     os.makedirs(task_dir, exist_ok=True)
 
@@ -330,7 +349,6 @@ def api_retry(job_id: str, req: JobReq, bg_tasks: BackgroundTasks):
             return {"status": "success"}
     return JSONResponse(status_code=400, content={"status": "error", "message": "无法重试，该任务的基础文件可能已经丢失或损毁。"})
 
-# 新增：响应前端无损更新数据的端点
 @app.post("/api/jobs/{job_id}/update")
 def api_update(job_id: str, req: JobReq, bg_tasks: BackgroundTasks):
     job_file = os.path.join(USERS_DIR, req.username, job_id, "job.json")
@@ -343,7 +361,6 @@ def api_update(job_id: str, req: JobReq, bg_tasks: BackgroundTasks):
         
         with open(job_file, "w", encoding="utf-8") as f: json.dump(job, f, ensure_ascii=False)
         
-        # 触发新的后台任务
         bg_tasks.add_task(update_existing_job_task, req.username, job_id)
         return {"status": "success"}
     return JSONResponse(status_code=400, content={"status": "error", "message": "无法更新，该任务的基础配置已丢失。"})
