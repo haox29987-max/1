@@ -142,6 +142,9 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
         
         html_path = create_html_report(task_dir, video_data_list)
         title = analysis.get('short_summary', '分析报告')
+        
+        # 安全获取播放量
+        play_count = meta.get('stats', {}).get('play', 0) if isinstance(meta, dict) else 0
 
         update_job("completed", 100, "✅ 解析完成", {"title": title, "report_url": f"/storage/{username}/{job_id}/report.html?v={int(datetime.now().timestamp())}"})
         write_log(LOG_STORAGE, "成功生成网页数据", html_path)
@@ -157,8 +160,9 @@ def process_video_task(url: str, username: str, job_id: str, model: str):
                 d = os.path.join(cached_task_dir, item)
                 if os.path.isdir(s): shutil.copytree(s, d, dirs_exist_ok=True)
                 else: shutil.copy2(s, d)
+            # 新增：记录播放量以便管理员筛选
             with open(os.path.join(cached_task_dir, "meta.json"), "w", encoding="utf-8") as f:
-                json.dump({"title": title}, f, ensure_ascii=False)
+                json.dump({"title": title, "playCount": play_count}, f, ensure_ascii=False)
         except: pass
 
     except Exception as e:
@@ -225,6 +229,8 @@ def update_existing_job_task(username: str, job_id: str):
         
         html_path = create_html_report(task_dir, video_data_list)
         title = analysis.get('short_summary', '分析报告')
+        
+        play_count = meta.get('stats', {}).get('play', 0) if isinstance(meta, dict) else 0
 
         update_job("completed", 100, "✅ 数据与AI分析已成功更新", {
             "title": title, 
@@ -245,8 +251,9 @@ def update_existing_job_task(username: str, job_id: str):
                 d = os.path.join(cached_task_dir, item)
                 if os.path.isdir(s): shutil.copytree(s, d, dirs_exist_ok=True)
                 else: shutil.copy2(s, d)
+            # 同样写入播放量
             with open(os.path.join(cached_task_dir, "meta.json"), "w", encoding="utf-8") as f:
-                json.dump({"title": title}, f, ensure_ascii=False)
+                json.dump({"title": title, "playCount": play_count}, f, ensure_ascii=False)
         except: pass
 
     except Exception as e:
@@ -258,7 +265,10 @@ def update_existing_job_task(username: str, job_id: str):
 # ================= 🌐 API 端点 =================
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# ✨ 新增：将 Cache 目录也挂载为静态服务器，为了让管理员能在前端直接点击预览 Cache 里面的 report.html
 app.mount("/storage", StaticFiles(directory=USERS_DIR), name="storage")
+app.mount("/cache", StaticFiles(directory=CACHE_DIR), name="cache")
 
 class LoginReq(BaseModel): 
     username: str
@@ -439,7 +449,7 @@ def api_export(username: str, job_id: str):
     shutil.make_archive(zip_path.replace('.zip', ''), 'zip', task_dir)
     return FileResponse(zip_path, filename=f"TikTok脱机包_{job_id}.zip")
 
-# ================= 新增：管理员全局视频管控接口 =================
+# ================= 管理员全局视频管控接口 =================
 @app.get("/api/admin/videos")
 def get_all_cached_videos():
     """遍历公共 Cache 引擎池与用户池，深度聚合计算状态矩阵返回前端"""
@@ -450,11 +460,14 @@ def get_all_cached_videos():
             if not os.path.isdir(cache_v_dir): continue
             
             title = "未知缓存视频"
+            play_count = 0
             meta_path = os.path.join(cache_v_dir, "meta.json")
             if os.path.exists(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
-                        title = json.load(f).get("title", title)
+                        meta_data = json.load(f)
+                        title = meta_data.get("title", title)
+                        play_count = meta_data.get("playCount", 0) # 读取新存入的播放量
                 except: pass
             
             # 使用文件夹的物理最后修改时间作为最新时间基准
@@ -483,24 +496,22 @@ def get_all_cached_videos():
             videos.append({
                 "videoId": video_id,
                 "title": title,
+                "playCount": play_count,
                 "userCount": user_count,
                 "relatedUsers": list(related_users),
                 "timestamp": mtime
             })
             
-    # 按时间降序排列（最新存入的在最前面）
+    # 默认依然按时间降序（最新采集的在最上面）
     videos.sort(key=lambda x: x["timestamp"], reverse=True)
     return {"videos": videos}
 
 @app.delete("/api/admin/videos/{video_id}")
 def delete_admin_video_global(video_id: str):
-    """全局级联粉碎：不仅抹除公有云 Cache 文件夹，同时物理删除所有员工账户下的相关任务记录"""
-    # 1. 物理粉碎公共区域 Cache
+    """全局级联粉碎单体视频"""
     cache_v_dir = os.path.join(CACHE_DIR, video_id)
-    if os.path.exists(cache_v_dir):
-        shutil.rmtree(cache_v_dir, ignore_errors=True)
+    if os.path.exists(cache_v_dir): shutil.rmtree(cache_v_dir, ignore_errors=True)
         
-    # 2. 纵向切片，物理粉碎所有员工空间内包含该 videoId 的解析包
     if os.path.exists(USERS_DIR):
         for uname in os.listdir(USERS_DIR):
             user_dir = os.path.join(USERS_DIR, uname)
@@ -510,13 +521,37 @@ def delete_admin_video_global(video_id: str):
                 job_file = os.path.join(job_dir, "job.json")
                 if os.path.exists(job_file):
                     try:
-                        with open(job_file, "r", encoding="utf-8") as f:
-                            job_data = json.load(f)
+                        with open(job_file, "r", encoding="utf-8") as f: job_data = json.load(f)
                         if job_data.get("videoId") == video_id:
-                            # 识别到匹配副本，强制抹除
                             shutil.rmtree(job_dir, ignore_errors=True)
                     except: pass
-                    
+    return {"status": "success"}
+
+class BatchDeleteReq(BaseModel):
+    video_ids: list
+
+@app.post("/api/admin/videos/batch-delete")
+def delete_admin_videos_batch(req: BatchDeleteReq):
+    """高级功能：批量全局物理粉碎"""
+    for video_id in req.video_ids:
+        # 1. 清理公有池 Cache
+        cache_v_dir = os.path.join(CACHE_DIR, video_id)
+        if os.path.exists(cache_v_dir): shutil.rmtree(cache_v_dir, ignore_errors=True)
+            
+        # 2. 切片清理员工独立文件夹
+        if os.path.exists(USERS_DIR):
+            for uname in os.listdir(USERS_DIR):
+                user_dir = os.path.join(USERS_DIR, uname)
+                if not os.path.isdir(user_dir): continue
+                for job_folder in os.listdir(user_dir):
+                    job_dir = os.path.join(user_dir, job_folder)
+                    job_file = os.path.join(job_dir, "job.json")
+                    if os.path.exists(job_file):
+                        try:
+                            with open(job_file, "r", encoding="utf-8") as f: job_data = json.load(f)
+                            if job_data.get("videoId") == video_id:
+                                shutil.rmtree(job_dir, ignore_errors=True)
+                        except: pass
     return {"status": "success"}
 
 if __name__ == "__main__":
