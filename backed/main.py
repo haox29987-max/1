@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import traceback
 import requests
+import re  # ✨ 引入正则处理库，用于极限提取老版本 HTML 里的参数
 from datetime import datetime
 
 from fastapi import FastAPI, BackgroundTasks
@@ -214,7 +215,6 @@ def update_existing_job_task(username: str, job_id: str):
 
         update_job("cutting", 85, "正在根据最新AI脚本重新切割分镜 (清除旧数据)...")
         if segments:
-            # 不再跳过切片，强制重新生成最新的分镜图，确保与最新的 HTML 完全吻合
             segments = generate_gifs_for_segments_fastapi(video_path, segments, task_dir)
 
         update_job("cutting", 95, "合成最新的本地化 HTML 网页...")
@@ -251,7 +251,6 @@ def update_existing_job_task(username: str, job_id: str):
                 d = os.path.join(cached_task_dir, item)
                 if os.path.isdir(s): shutil.copytree(s, d, dirs_exist_ok=True)
                 else: shutil.copy2(s, d)
-            # 同样写入播放量
             with open(os.path.join(cached_task_dir, "meta.json"), "w", encoding="utf-8") as f:
                 json.dump({"title": title, "playCount": play_count}, f, ensure_ascii=False)
         except: pass
@@ -266,7 +265,6 @@ def update_existing_job_task(username: str, job_id: str):
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# ✨ 新增：将 Cache 目录也挂载为静态服务器，为了让管理员能在前端直接点击预览 Cache 里面的 report.html
 app.mount("/storage", StaticFiles(directory=USERS_DIR), name="storage")
 app.mount("/cache", StaticFiles(directory=CACHE_DIR), name="cache")
 
@@ -333,7 +331,7 @@ def api_analyze(req: AnalyzeReq, bg_tasks: BackgroundTasks):
     video_id = get_tiktok_id(req.urls[0])
     user_dir = os.path.join(USERS_DIR, req.username)
     
-    # ✨ 极致清理 3：用户端绝对拦截！如果用户重复输入同一个视频链接，自动物理删除旧的任务，只保留最新一次的动作
+    # ✨ 极致清理 3：用户端绝对拦截！
     if os.path.exists(user_dir):
         for folder in os.listdir(user_dir):
             old_task_dir = os.path.join(user_dir, folder)
@@ -343,7 +341,7 @@ def api_analyze(req: AnalyzeReq, bg_tasks: BackgroundTasks):
                     with open(old_job_file, "r", encoding="utf-8") as f:
                         old_job = json.load(f)
                     if old_job.get("videoId") == video_id:
-                        shutil.rmtree(old_task_dir, ignore_errors=True) # 直接删了旧文件夹腾出空间
+                        shutil.rmtree(old_task_dir, ignore_errors=True) 
                 except:
                     pass
 
@@ -461,14 +459,48 @@ def get_all_cached_videos():
             
             title = "未知缓存视频"
             play_count = 0
+            
+            # ✨ 核心优化 2：多级 fallback 的正则提取引擎
+            # 第一梯队：直接找新代码生成的 meta.json
             meta_path = os.path.join(cache_v_dir, "meta.json")
             if os.path.exists(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
                         meta_data = json.load(f)
                         title = meta_data.get("title", title)
-                        play_count = meta_data.get("playCount", 0) # 读取新存入的播放量
+                        play_count = meta_data.get("playCount", 0) 
                 except: pass
+            
+            # 第二梯队：如果是旧缓存（没 playCount 或没 title），直接暴破读取物理生成的 report.html 进行提取！
+            if play_count == 0 or title == "未知缓存视频":
+                report_path = os.path.join(cache_v_dir, "report.html")
+                if os.path.exists(report_path):
+                    try:
+                        with open(report_path, "r", encoding="utf-8") as f:
+                            html_content = f.read()
+                            
+                            # 提取丢失的播放量
+                            if play_count == 0:
+                                # 优先匹配 JSON 格式的播放量记录 (如 "play": 12345)
+                                match_json = re.search(r'["\']play["\']\s*:\s*(\d+)', html_content)
+                                if match_json:
+                                    play_count = int(match_json.group(1))
+                                else:
+                                    # 如果没有，退化匹配中文字段 (如 播放量: 12345)
+                                    match_text = re.search(r'播放(?:量)?\s*[:：]\s*(\d+)', html_content)
+                                    if match_text:
+                                        play_count = int(match_text.group(1))
+                            
+                            # 提取丢失的旧视频标题
+                            if title == "未知缓存视频":
+                                match_summary = re.search(r'["\']short_summary["\']\s*:\s*["\'](.*?)["\']', html_content)
+                                if match_summary:
+                                    title = match_summary.group(1)
+                                else:
+                                    match_title = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE)
+                                    if match_title:
+                                        title = match_title.group(1).replace("分析报告", "").strip() or "分析报告"
+                    except: pass
             
             # 使用文件夹的物理最后修改时间作为最新时间基准
             mtime = os.path.getmtime(cache_v_dir)
@@ -502,8 +534,8 @@ def get_all_cached_videos():
                 "timestamp": mtime
             })
             
-    # 默认依然按时间降序（最新采集的在最上面）
-    videos.sort(key=lambda x: x["timestamp"], reverse=True)
+    # 默认按拥有文件的员工数量(userCount)降序排列
+    videos.sort(key=lambda x: (x["userCount"], x["timestamp"]), reverse=True)
     return {"videos": videos}
 
 @app.delete("/api/admin/videos/{video_id}")

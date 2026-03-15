@@ -20,7 +20,10 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
   const [videos, setVideos] = useState<any[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' } | null>({ key: 'userCount', direction: 'desc' });
+  
+  // 用于控制展示哪个视频的绑定员工名单弹窗
+  const [viewingUsersId, setViewingUsersId] = useState<string | null>(null);
 
   // 基础环境 API 地址计算
   const API_BASE = "http://" + window.location.hostname + ":8001";
@@ -38,7 +41,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
       const data = await res.json();
       if (data.videos) {
         setVideos(data.videos);
-        setSelectedIds([]); // 刷新数据时重置选择
+        setSelectedIds([]); 
       }
     } catch (error) {
       console.error("加载全局视频数据库池失败", error);
@@ -47,7 +50,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
     }
   };
 
-  // 排序控制引擎
   const handleSort = (key: SortKey) => {
     let direction: 'asc' | 'desc' = 'desc';
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
@@ -56,7 +58,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
     setSortConfig({ key, direction });
   };
 
-  // 排序计算器
   const sortedVideos = React.useMemo(() => {
     let sortableVideos = [...videos];
     if (sortConfig !== null) {
@@ -73,7 +74,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
     return sortableVideos;
   }, [videos, sortConfig]);
 
-  // 全选/反选逻辑
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
       setSelectedIds(sortedVideos.map(v => v.videoId));
@@ -88,7 +88,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
     );
   };
 
-  // 单个粉碎操作
   const handleDeleteVideo = async (videoId: string) => {
     if (!confirm(`【危险操作警报】确定要彻底粉碎视频 [${videoId}] 吗？\n系统将同步物理粉碎所有绑定了该视频的员工独立解析包！`)) return;
     try {
@@ -102,7 +101,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
     }
   };
 
-  // 批量粉碎引擎
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) return;
     if (!confirm(`【高危操作】您正在一次性彻底粉碎选中的 ${selectedIds.length} 个核心视频数据。\n此操作不可逆，且会清空所有关联员工名下的副本，确定执行吗？`)) return;
@@ -136,6 +134,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
   };
 
   const formatPlayCount = (num: number) => {
+    if (!num || num === 0) return '暂未记录';
     if (num >= 10000) return (num / 10000).toFixed(1) + ' 万';
     return num.toLocaleString();
   };
@@ -269,7 +268,7 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                     目前底层公有池没有任何已被缓存的视频文件
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto min-h-[400px]">
                     <table className="w-full text-left">
                       <thead>
                         <tr className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100">
@@ -282,7 +281,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                             />
                           </th>
                           <th className="pb-4">视图信息 & 报告跳转</th>
-                          {/* 可排序表头：播放量 */}
                           <th className="pb-4 cursor-pointer hover:text-indigo-600 transition-colors select-none group" onClick={() => handleSort('playCount')}>
                             <div className="flex items-center gap-1">播放量数据
                               <span className={`text-[10px] ${sortConfig?.key === 'playCount' ? 'text-indigo-600' : 'text-slate-200 group-hover:text-indigo-300'}`}>
@@ -290,7 +288,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                               </span>
                             </div>
                           </th>
-                          {/* 可排序表头：绑定员工数量 */}
                           <th className="pb-4 cursor-pointer hover:text-indigo-600 transition-colors select-none group" onClick={() => handleSort('userCount')}>
                             <div className="flex items-center gap-1">绑定员工分布
                               <span className={`text-[10px] ${sortConfig?.key === 'userCount' ? 'text-indigo-600' : 'text-slate-200 group-hover:text-indigo-300'}`}>
@@ -298,7 +295,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                               </span>
                             </div>
                           </th>
-                          {/* 可排序表头：存活期 */}
                           <th className="pb-4 cursor-pointer hover:text-indigo-600 transition-colors select-none group" onClick={() => handleSort('timestamp')}>
                             <div className="flex items-center gap-1">底层存活期
                               <span className={`text-[10px] ${sortConfig?.key === 'timestamp' ? 'text-indigo-600' : 'text-slate-200 group-hover:text-indigo-300'}`}>
@@ -327,7 +323,6 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                                 </span>
                                 <div className="flex items-center gap-3">
                                   <span className="font-mono text-[10px] font-bold text-slate-400">ID: {vid.videoId}</span>
-                                  {/* ✨ 新增：直接点击进入 HTML 报告阅览页 */}
                                   <a 
                                     href={`${API_BASE}/cache/${vid.videoId}/report.html`} 
                                     target="_blank" 
@@ -346,19 +341,52 @@ const AdminPortal: React.FC<AdminPortalProps> = ({ onLogout, allowedUsers, setAl
                               </span>
                             </td>
                             <td className="py-5">
-                              <div className="flex flex-col items-start">
-                                <span className={`px-2 py-0.5 rounded-full text-xs font-black ${vid.userCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
-                                  {vid.userCount} 个副本被挂载
-                                </span>
-                                {/* ✨ 新增排版：详细展示哪些员工在使用该缓存视频 */}
-                                {vid.relatedUsers && vid.relatedUsers.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2 max-w-[200px]">
-                                    {vid.relatedUsers.map((uname: string) => (
-                                      <span key={uname} className="px-2 py-0.5 bg-white border border-slate-200 shadow-sm text-slate-600 rounded-md text-[10px] font-bold">
-                                        👤 {uname}
-                                      </span>
-                                    ))}
-                                  </div>
+                              <div className="flex flex-col items-start relative">
+                                {/* ✨ 优化点：直接把文本标签做成可点击的交互按钮，并去掉下面多余的按钮 */}
+                                <button
+                                  onClick={(e) => {
+                                    if (vid.userCount > 0) {
+                                      e.stopPropagation();
+                                      setViewingUsersId(viewingUsersId === vid.videoId ? null : vid.videoId);
+                                    }
+                                  }}
+                                  className={`px-3 py-1 rounded-full text-xs font-black transition-all flex items-center gap-1 border border-transparent
+                                    ${vid.userCount > 0 
+                                      ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 hover:border-amber-300 cursor-pointer shadow-sm active:scale-95' 
+                                      : 'bg-slate-100 text-slate-500 cursor-default'}`}
+                                  title={vid.userCount > 0 ? "点击查看绑定员工名单" : ""}
+                                >
+                                  {vid.userCount} 人拥有此文件
+                                  {vid.userCount > 0 && (
+                                    <svg className="w-3.5 h-3.5 opacity-60 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                  )}
+                                </button>
+                                
+                                {/* 优雅的绝对定位气泡弹窗，悬浮于表格层之上 */}
+                                {viewingUsersId === vid.videoId && vid.relatedUsers && vid.relatedUsers.length > 0 && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setViewingUsersId(null)}
+                                      title="点击空白处关闭"
+                                    />
+                                    <div className="absolute top-full left-0 mt-2 w-64 bg-white border border-slate-200 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] rounded-2xl p-4 z-50 animate-fade-in">
+                                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">目前拥有此文件的员工</span>
+                                        <button onClick={() => setViewingUsersId(null)} className="text-slate-300 hover:text-slate-500 bg-slate-50 rounded-full p-1 transition-colors">
+                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {vid.relatedUsers.map((uname: string) => (
+                                          <span key={uname} className="px-2.5 py-1 bg-slate-50 border border-slate-100 text-slate-700 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 hover:bg-white transition-colors">
+                                            <div className="w-4 h-4 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-[8px] font-black">{uname[0]}</div>
+                                            {uname}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </>
                                 )}
                               </div>
                             </td>
